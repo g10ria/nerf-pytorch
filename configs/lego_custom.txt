@@ -19,4 +19,7 @@ precrop_frac = 0.5
 half_res = True
 quarter_res = False
 
-i_video = 1000
+i_video = 5000
+i_weights = 1000
+
+test_sample_freq = 1

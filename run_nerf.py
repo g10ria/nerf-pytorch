@@ -487,6 +487,8 @@ def config_parser():
                         help='number of steps to train on central crops')
     parser.add_argument("--precrop_frac", type=float,
                         default=.5, help='fraction of img taken for central crops') 
+    parser.add_argument("--test_sample_freq", type=int, default=1, 
+                        help='per how many sample test data points to use')
 
     # dataset options
     parser.add_argument("--dataset_type", type=str, default='llff', 
@@ -556,7 +558,7 @@ def train():
 
         i_val = i_test
         i_train = np.array([i for i in np.arange(int(images.shape[0])) if
-                        (i not in i_test and i not in i_val)])
+                        (i not in i_test and i not in i_val and i % args.test_sample_freq == 0)])
 
         print('DEFINING BOUNDS')
         if args.no_ndc:
@@ -676,7 +678,7 @@ def train():
         rays_rgb = torch.Tensor(rays_rgb).to(device)
 
 
-    N_iters = 1000 + 1
+    N_iters = 20000 + 1
     print('Begin')
     print('TRAIN views are', i_train)
     print('TEST views are', i_test)
@@ -777,12 +779,12 @@ def train():
 
         if i%args.i_video==0 and i > 0:
             # Turn on testing mode
-            testsavedir = os.path.join(basedir, expname, 'output')
+            testsavedir = os.path.join(basedir, expname, 'output_{:06d}'.format(i))
             os.makedirs(testsavedir, exist_ok=True)
             print("Exporting video with one frame lol")
             
             with torch.no_grad():
-                rgbs, _ = render_path(render_poses[0:1,:,:], hwf, K, args.chunk, render_kwargs_test, savedir=testsavedir, render_factor=args.render_factor)
+                rgbs, _ = render_path(render_poses[5:6,:,:], hwf, K, args.chunk, render_kwargs_test, savedir=testsavedir, render_factor=args.render_factor)
             print('Done rendering', testsavedir)
             imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
             
@@ -802,118 +804,9 @@ def train():
                 render_path(torch.Tensor(poses[i_test]).to(device), hwf, K, args.chunk, render_kwargs_test, gt_imgs=images[i_test], savedir=testsavedir)
             print('Saved test set')
 
-
-        # OUTPUT TEMP IMAGE HERE!
-        if i%args.i_img==0:
-
-            # Log a rendered validation view to Tensorboard
-            # with torch.no_grad():
-            #     rgb, disp, acc, extras = render(H, W, focal, chunk=args.chunk, c2w=pose,
-            #                                         **render_kwargs_test)
-                
-            img_i = np.random.choice(i_val)
-            target = images[img_i]
-            target = torch.Tensor(target).to(device)
-            pose = poses[img_i, :3,:4]
-
-            with torch.no_grad():
-                rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, c2w=pose,
-                                                    **render_kwargs_test)
-                print(rgb)
-                plt.imshow(rgb, interpolation='nearest')
-                plt.show()
-                # rgb, disp, acc, extras = render(H, W, K, chunk=args.chunk, rays=batch_rays,
-                #                                 verbose=i < 10, retraw=True,
-                #                                 **render_kwargs_train)
-            # if N_rand is not None:
-            #     rays_o, rays_d = get_rays(H, W, K, torch.Tensor(pose))  # (H, W, 3), (H, W, 3)
-
-            #     if i < args.precrop_iters:
-            #         dH = int(H//2 * args.precrop_frac)
-            #         dW = int(W//2 * args.precrop_frac)
-            #         coords = torch.stack(
-            #             torch.meshgrid(
-            #                 torch.linspace(H//2 - dH, H//2 + dH - 1, 2*dH), 
-            #                 torch.linspace(W//2 - dW, W//2 + dW - 1, 2*dW)
-            #             ), -1)
-            #         if i == start:
-            #             print(f"[Config] Center cropping of size {2*dH} x {2*dW} is enabled until iter {args.precrop_iters}")                
-            #     else:
-            #         coords = torch.stack(torch.meshgrid(torch.linspace(0, H-1, H), torch.linspace(0, W-1, W)), -1)  # (H, W, 2)
-
-            #     coords = torch.reshape(coords, [-1,2])  # (H * W, 2)
-            #     select_inds = np.random.choice(coords.shape[0], size=[N_rand], replace=False)  # (N_rand,)
-            #     select_coords = coords[select_inds].long()  # (N_rand, 2)
-            #     rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-            #     rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-            #     batch_rays = torch.stack([rays_o, rays_d], 0)
-            #     target_s = target[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-
-        #     psnr = mse2psnr(img2mse(rgb, target))
-        #     print(acc)
-
-            # with tf.contrib.summary.record_summaries_every_n_global_steps(args.i_img):
-
-            #     tf.contrib.summary.image('rgb', to8b(rgb)[tf.newaxis])
-            #     tf.contrib.summary.image('disp', disp[tf.newaxis,...,tf.newaxis])
-            #     tf.contrib.summary.image('acc', acc[tf.newaxis,...,tf.newaxis])
-
-            #     tf.contrib.summary.scalar('psnr_holdout', psnr)
-            #     tf.contrib.summary.image('rgb_holdout', target[tf.newaxis])
-
-
-            # if args.N_importance > 0:
-
-            #     with tf.contrib.summary.record_summaries_every_n_global_steps(args.i_img):
-            #         tf.contrib.summary.image('rgb0', to8b(extras['rgb0'])[tf.newaxis])
-            #         tf.contrib.summary.image('disp0', extras['disp0'][tf.newaxis,...,tf.newaxis])
-            #         tf.contrib.summary.image('z_std', extras['z_std'][tf.newaxis,...,tf.newaxis])
-
-    
         if i%args.i_print==0:
             tqdm.write(f"[TRAIN] Iter: {i} Loss: {loss.item()}  PSNR: {psnr.item()}")
-        """
-            print(expname, i, psnr.numpy(), loss.numpy(), global_step.numpy())
-            print('iter time {:.05f}'.format(dt))
-
-            with tf.contrib.summary.record_summaries_every_n_global_steps(args.i_print):
-                tf.contrib.summary.scalar('loss', loss)
-                tf.contrib.summary.scalar('psnr', psnr)
-                tf.contrib.summary.histogram('tran', trans)
-                if args.N_importance > 0:
-                    tf.contrib.summary.scalar('psnr0', psnr0)
-
-
-            if i%args.i_img==0:
-
-                # Log a rendered validation view to Tensorboard
-                img_i=np.random.choice(i_val)
-                target = images[img_i]
-                pose = poses[img_i, :3,:4]
-                with torch.no_grad():
-                    rgb, disp, acc, extras = render(H, W, focal, chunk=args.chunk, c2w=pose,
-                                                        **render_kwargs_test)
-
-                psnr = mse2psnr(img2mse(rgb, target))
-
-                with tf.contrib.summary.record_summaries_every_n_global_steps(args.i_img):
-
-                    tf.contrib.summary.image('rgb', to8b(rgb)[tf.newaxis])
-                    tf.contrib.summary.image('disp', disp[tf.newaxis,...,tf.newaxis])
-                    tf.contrib.summary.image('acc', acc[tf.newaxis,...,tf.newaxis])
-
-                    tf.contrib.summary.scalar('psnr_holdout', psnr)
-                    tf.contrib.summary.image('rgb_holdout', target[tf.newaxis])
-
-
-                if args.N_importance > 0:
-
-                    with tf.contrib.summary.record_summaries_every_n_global_steps(args.i_img):
-                        tf.contrib.summary.image('rgb0', to8b(extras['rgb0'])[tf.newaxis])
-                        tf.contrib.summary.image('disp0', extras['disp0'][tf.newaxis,...,tf.newaxis])
-                        tf.contrib.summary.image('z_std', extras['z_std'][tf.newaxis,...,tf.newaxis])
-        """
-
+        
         global_step += 1
 
 
