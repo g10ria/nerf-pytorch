@@ -503,6 +503,8 @@ def config_parser():
                         help='set to render synthetic data on a white bkgd (always use for dvoxels)')
     parser.add_argument("--half_res", action='store_true', 
                         help='load blender synthetic data at 400x400 instead of 800x800')
+    parser.add_argument("--quarter_res", action='store_true', 
+                        help='load blender synthetic data at 200x200 instead of 800x800')
 
     ## llff flags
     parser.add_argument("--factor", type=int, default=8, 
@@ -567,7 +569,7 @@ def train():
         print('NEAR FAR', near, far)
 
     elif args.dataset_type == 'blender':
-        images, poses, render_poses, hwf, i_split = load_blender_data(args.datadir, args.half_res, args.testskip)
+        images, poses, render_poses, hwf, i_split = load_blender_data(args.datadir, args.half_res, args.quarter_res, args.testskip)
         print('Loaded blender', images.shape, render_poses.shape, hwf, args.datadir)
         i_train, i_val, i_test = i_split
 
@@ -578,30 +580,6 @@ def train():
             images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
         else:
             images = images[...,:3]
-
-    elif args.dataset_type == 'LINEMOD':
-        images, poses, render_poses, hwf, K, i_split, near, far = load_LINEMOD_data(args.datadir, args.half_res, args.testskip)
-        print(f'Loaded LINEMOD, images shape: {images.shape}, hwf: {hwf}, K: {K}')
-        print(f'[CHECK HERE] near: {near}, far: {far}.')
-        i_train, i_val, i_test = i_split
-
-        if args.white_bkgd:
-            images = images[...,:3]*images[...,-1:] + (1.-images[...,-1:])
-        else:
-            images = images[...,:3]
-
-    elif args.dataset_type == 'deepvoxels':
-
-        images, poses, render_poses, hwf, i_split = load_dv_data(scene=args.shape,
-                                                                 basedir=args.datadir,
-                                                                 testskip=args.testskip)
-
-        print('Loaded deepvoxels', images.shape, render_poses.shape, hwf, args.datadir)
-        i_train, i_val, i_test = i_split
-
-        hemi_R = np.mean(np.linalg.norm(poses[:,:3,-1], axis=-1))
-        near = hemi_R-1.
-        far = hemi_R+1.
 
     else:
         print('Unknown dataset type', args.dataset_type, 'exiting')
@@ -799,20 +777,22 @@ def train():
 
         if i%args.i_video==0 and i > 0:
             # Turn on testing mode
+            testsavedir = os.path.join(basedir, expname, 'output')
+            os.makedirs(testsavedir, exist_ok=True)
             print("Exporting video with one frame lol")
+            
             with torch.no_grad():
-                rgbs, disps = render_path(render_poses[0:1,:,:], hwf, K, args.chunk, render_kwargs_test)
-            print('Done, saving', rgbs.shape, disps.shape)
-            moviebase = os.path.join(basedir, expname, '{}_spiral_{:06d}_'.format(expname, i))
-            imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=30, quality=8)
-            imageio.mimwrite(moviebase + 'disp.mp4', to8b(disps / np.max(disps)), fps=30, quality=8)
+                rgbs, _ = render_path(render_poses[0:1,:,:], hwf, K, args.chunk, render_kwargs_test, savedir=testsavedir, render_factor=args.render_factor)
+            print('Done rendering', testsavedir)
+            imageio.mimwrite(os.path.join(testsavedir, 'video.mp4'), to8b(rgbs), fps=30, quality=8)
+            
+            # with torch.no_grad():
+            #     rgbs, disps = render_path(render_poses[0:1,:,:], hwf, K, args.chunk, render_kwargs_test)
+            # print('Done, saving', rgbs.shape, disps.shape)
+            # moviebase = os.path.join(basedir, expname, '{}_spiral_{:06d}_'.format(expname, i))
+            # imageio.mimwrite(moviebase + 'rgb.mp4', to8b(rgbs), fps=30, quality=8)
+            # imageio.mimwrite(moviebase + 'disp.mp4', to8b(disps / np.max(disps)), fps=30, quality=8)
 
-            # if args.use_viewdirs:
-            #     render_kwargs_test['c2w_staticcam'] = render_poses[0][:3,:4]
-            #     with torch.no_grad():
-            #         rgbs_still, _ = render_path(render_poses, hwf, args.chunk, render_kwargs_test)
-            #     render_kwargs_test['c2w_staticcam'] = None
-            #     imageio.mimwrite(moviebase + 'rgb_still.mp4', to8b(rgbs_still), fps=30, quality=8)
 
         if i%args.i_testset==0 and i > 0:
             testsavedir = os.path.join(basedir, expname, 'testset_{:06d}'.format(i))
